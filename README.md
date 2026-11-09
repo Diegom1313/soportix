@@ -84,3 +84,7 @@ php backend/tests/run.php
 ```
 
 Cubren autenticación, permisos entre usuarios, tickets, agente, métricas y errores. GitHub Actions los ejecuta con SQLite y con PostgreSQL. Las medidas de seguridad están en [SECURITY.md](SECURITY.md).
+
+## Licencia
+
+[MIT](LICENSE)

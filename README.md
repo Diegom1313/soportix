@@ -9,7 +9,8 @@ Portal de soporte técnico con inventario automático de equipos. Reúne en un s
 - **Tickets** con roles (administración, técnico, usuario), prioridades, plazos, asignación y notas internas.
 - **Inventario** de hardware y software enviado por agentes en Bash y PowerShell.
 - **Alertas automáticas**: si un equipo supera el 90 % de disco se abre un ticket, sin duplicarlo mientras siga activo.
-- **Panel** en Vue con métricas e historial por equipo.
+- **Panel** en Vue con búsqueda, filtros, tema claro y oscuro, e historial por equipo.
+- **Cuentas**: cambio de contraseña, restablecimiento por administración y registro de actividad.
 - **Monitorización** con Prometheus y Grafana, y copias de seguridad con prueba de restauración.
 
 ## Arquitectura
@@ -63,7 +64,8 @@ SOPORTIX_URL=https://soporte.ejemplo.com SOPORTIX_KEY=clave ./agent/soportix-age
 ```
 
 ```powershell
-.\agent\soportix-agent.ps1 -Url https://soporte.ejemplo.com -Key clave
+$env:SOPORTIX_URL = "https://soporte.ejemplo.com"; $env:SOPORTIX_KEY = "clave"
+.\agent\soportix-agent.ps1
 ```
 
 ## Copias de seguridad

@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Soportix\Controllers;
 
+use Soportix\Audit;
 use Soportix\Auth;
 use Soportix\Clock;
 use Soportix\Database;
@@ -14,7 +15,7 @@ final class UserController
 {
     private const ROLES = ['admin', 'tecnico', 'usuario'];
 
-    public function __construct(private readonly Database $db)
+    public function __construct(private readonly Database $db, private readonly Auth $auth, private readonly Audit $audit)
     {
     }
 
@@ -31,7 +32,7 @@ final class UserController
     public function store(Request $r): array
     {
         $data = (new Validator($r->body))
-            ->string('name', 2, 120)->email('email')->string('password', 12, 200)->in('role', self::ROLES)->validated();
+            ->string('name', 2, 120)->email('email')->password('password')->in('role', self::ROLES)->validated();
         if ($this->db->value('SELECT COUNT(*) FROM users WHERE email = ?', [$data['email']])) {
             throw new HttpError(409, 'Ese correo ya existe');
         }
@@ -39,7 +40,22 @@ final class UserController
             'INSERT INTO users (name, email, password_hash, role, created_at) VALUES (?, ?, ?, ?, ?)',
             [$data['name'], $data['email'], password_hash($data['password'], PASSWORD_DEFAULT), $data['role'], Clock::now()]
         );
+        $this->audit->record($r, 'usuario.alta', "{$data['email']} ({$data['role']})");
         return [201, Auth::publicUser($this->db->one('SELECT * FROM users WHERE id = ?', [$id]))];
+    }
+
+    public function resetPassword(Request $r): array
+    {
+        $id = $r->int('id');
+        $user = $this->db->one('SELECT * FROM users WHERE id = ?', [$id]);
+        if (!$user) {
+            throw new HttpError(404, 'Usuario no encontrado');
+        }
+        $data = (new Validator($r->body))->password('password')->validated();
+        $this->auth->setPassword($id, $data['password']);
+        $this->auth->revokeAll($id);
+        $this->audit->record($r, 'usuario.reinicio_contrasena', $user['email']);
+        return [204, null];
     }
 
     public function update(Request $r): array
@@ -58,8 +74,9 @@ final class UserController
         }
         $this->db->run('UPDATE users SET role = ?, active = ? WHERE id = ?', [$role, $active, $id]);
         if ($active === 0) {
-            $this->db->run('DELETE FROM api_tokens WHERE user_id = ?', [$id]);
+            $this->auth->revokeAll($id);
         }
+        $this->audit->record($r, 'usuario.cambio', "{$user['email']}: rol $role, " . ($active ? 'activo' : 'inactivo'));
         return [200, Auth::publicUser($this->db->one('SELECT * FROM users WHERE id = ?', [$id]))];
     }
 }

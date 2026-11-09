@@ -12,6 +12,7 @@ RUN a2enmod setenvif headers
 COPY ops/apache.conf /etc/apache2/sites-available/000-default.conf
 COPY backend/ /var/www/soportix/
 COPY --from=panel /build/ /var/www/soportix/public/
+RUN rm -rf /var/www/soportix/tests /var/www/soportix/bin/seed-demo.php /var/www/soportix/data
 COPY ops/entrypoint.sh /usr/local/bin/soportix-entrypoint
 RUN chmod +x /usr/local/bin/soportix-entrypoint
 EXPOSE 80

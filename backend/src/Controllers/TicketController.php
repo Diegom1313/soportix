@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Soportix\Controllers;
 
+use Soportix\Audit;
 use Soportix\Clock;
 use Soportix\Database;
 use Soportix\HttpError;
@@ -12,11 +13,12 @@ use Soportix\Validator;
 final class TicketController
 {
     public const SLA_HOURS = ['critica' => 4, 'alta' => 8, 'media' => 24, 'baja' => 72];
+    private const PER_PAGE = 20;
     private const STATUSES = ['abierto', 'en_curso', 'resuelto', 'cerrado'];
     private const SELECT = 'SELECT t.*, r.name AS requester_name, a.name AS assignee_name, d.hostname AS device_hostname
         FROM tickets t LEFT JOIN users r ON r.id = t.requester_id LEFT JOIN users a ON a.id = t.assignee_id LEFT JOIN devices d ON d.id = t.device_id';
 
-    public function __construct(private readonly Database $db)
+    public function __construct(private readonly Database $db, private readonly Audit $audit)
     {
     }
 
@@ -51,15 +53,33 @@ final class TicketController
             $where[] = 't.requester_id = ?';
             $params[] = $r->user['id'];
         }
-        foreach (['status', 'priority'] as $filter) {
-            if (is_string($r->query[$filter] ?? null) && $r->query[$filter] !== '') {
-                $where[] = "t.$filter = ?";
-                $params[] = $r->query[$filter];
+        foreach (['status' => self::STATUSES, 'priority' => array_keys(self::SLA_HOURS)] as $filter => $allowed) {
+            $value = $r->query[$filter] ?? '';
+            if ($value === '') {
+                continue;
             }
+            if (!in_array($value, $allowed, true)) {
+                throw new HttpError(422, 'Filtro no válido');
+            }
+            $where[] = "t.$filter = ?";
+            $params[] = $value;
         }
-        $page = min(100000, max(1, (int) ($r->query['page'] ?? 1)));
-        $sql = self::SELECT . ($where ? ' WHERE ' . implode(' AND ', $where) : '') . ' ORDER BY t.id DESC LIMIT 50 OFFSET ' . (($page - 1) * 50);
-        return [200, array_map([self::class, 'present'], $this->db->all($sql, $params))];
+        $search = $r->query['q'] ?? '';
+        if ($search !== '') {
+            $clean = (new Validator(['q' => $search]))->string('q', 1, 100)->validated()['q'];
+            $where[] = "LOWER(t.title) LIKE ? ESCAPE '!'";
+            $params[] = '%' . mb_strtolower(str_replace(['!', '%', '_'], ['!!', '!%', '!_'], $clean)) . '%';
+        }
+        if (($r->query['overdue'] ?? '') === '1') {
+            $where[] = "t.status IN ('abierto','en_curso') AND t.due_at < ?";
+            $params[] = Clock::now();
+        }
+        $condition = $where ? ' WHERE ' . implode(' AND ', $where) : '';
+        $total = (int) $this->db->value('SELECT COUNT(*) FROM tickets t' . $condition, $params);
+        $pages = max(1, (int) ceil($total / self::PER_PAGE));
+        $page = min($pages, max(1, (int) ($r->query['page'] ?? 1)));
+        $sql = self::SELECT . $condition . ' ORDER BY t.id DESC LIMIT ' . self::PER_PAGE . ' OFFSET ' . (($page - 1) * self::PER_PAGE);
+        return [200, ['items' => array_map([self::class, 'present'], $this->db->all($sql, $params)), 'total' => $total, 'page' => $page, 'pages' => $pages]];
     }
 
     public function show(Request $r): array
@@ -104,6 +124,10 @@ final class TicketController
         $status = $data['status'] ?? $ticket['status'];
         $priority = $data['priority'] ?? $ticket['priority'];
         $assignee = array_key_exists('assignee_id', $data) ? $data['assignee_id'] : $ticket['assignee_id'];
+        if ($ticket['alert_key'] !== null && in_array($status, ['abierto', 'en_curso'], true) && !in_array($ticket['status'], ['abierto', 'en_curso'], true)
+            && $this->db->value("SELECT COUNT(*) FROM tickets WHERE device_id = ? AND alert_key = ? AND status IN ('abierto','en_curso')", [$ticket['device_id'], $ticket['alert_key']])) {
+            throw new HttpError(409, 'Ya hay otra alerta activa para este equipo');
+        }
         $resolved = in_array($status, ['resuelto', 'cerrado'], true) ? ($ticket['resolved_at'] ?? Clock::now()) : null;
         $due = $priority !== $ticket['priority']
             ? gmdate('Y-m-d\TH:i:s\Z', strtotime($ticket['created_at']) + self::SLA_HOURS[$priority] * 3600)
@@ -112,6 +136,7 @@ final class TicketController
             'UPDATE tickets SET status = ?, priority = ?, assignee_id = ?, resolved_at = ?, due_at = ?, updated_at = ? WHERE id = ?',
             [$status, $priority, $assignee, $resolved, $due, Clock::now(), $ticket['id']]
         );
+        $this->audit->record($r, 'ticket.cambio', "#{$ticket['id']}: $status, $priority");
         return [200, self::present($this->db->one(self::SELECT . ' WHERE t.id = ?', [$ticket['id']]))];
     }
 

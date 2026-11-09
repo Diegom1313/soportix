@@ -2,6 +2,7 @@ services:
   db:
     image: postgres:16-alpine
     restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
     environment:
       POSTGRES_DB: soportix
       POSTGRES_USER: soportix
@@ -16,6 +17,7 @@ services:
   app:
     build: .
     restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
     depends_on:
       db:
         condition: service_healthy
@@ -31,6 +33,7 @@ services:
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
     depends_on: [app]
     ports: ["80:80", "443:443"]
     environment:
@@ -42,6 +45,7 @@ services:
   prometheus:
     image: prom/prometheus:v3.1.0
     restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
     environment:
       METRICS_TOKEN: ${METRICS_TOKEN}
     entrypoint: ["/bin/sh", "-c", "printf %s \"$$METRICS_TOKEN\" > /tmp/token && exec /bin/prometheus --config.file=/etc/prometheus/prometheus.yml --storage.tsdb.path=/prometheus"]
@@ -52,6 +56,7 @@ services:
   grafana:
     image: grafana/grafana:11.4.0
     restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
     depends_on: [prometheus]
     ports: ["127.0.0.1:3000:3000"]
     environment:

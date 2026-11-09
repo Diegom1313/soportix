@@ -14,6 +14,7 @@ if (!$dsn) {
     $file = tempnam(sys_get_temp_dir(), 'soportix');
     $dsn = "sqlite:$file";
 }
+putenv('AGENT_MIN_INTERVAL=0');
 $db = new Database($dsn, getenv('TEST_DB_USER') ?: null, getenv('TEST_DB_PASSWORD') ?: null);
 $db->migrate(dirname(__DIR__) . '/migrations');
 $app = new App($db);
@@ -94,8 +95,8 @@ check('prioridad inválida', call('POST', '/api/tickets', ['title' => 'Prueba', 
 check('tipo no texto', call('POST', '/api/tickets', ['title' => ['a'], 'description' => 'xxx', 'priority' => 'baja'], $ana)[0] === 422);
 check('el dueño lo ve', call('GET', "/api/tickets/$id", [], $ana)[0] === 200);
 check('otro usuario no lo ve', call('GET', "/api/tickets/$id", [], $luis)[0] === 404);
-check('el listado solo muestra los propios', call('GET', '/api/tickets', [], $luis)[1] === []);
-check('el técnico lo ve', count(call('GET', '/api/tickets', [], $tech)[1]) === 1);
+check('el listado solo muestra los propios', call('GET', '/api/tickets', [], $luis)[1]['items'] === []);
+check('el técnico lo ve', count(call('GET', '/api/tickets', [], $tech)[1]['items']) === 1);
 check('el usuario no cambia estado', call('PATCH', "/api/tickets/$id", ['status' => 'cerrado'], $ana)[0] === 403);
 $techId = call('GET', '/api/me', [], $tech)[1]['id'];
 $anaId = call('GET', '/api/me', [], $ana)[1]['id'];
@@ -104,8 +105,8 @@ check('asigna técnico', $u[1]['assignee_id'] === $techId && $u[1]['status'] ===
 check('no asigna a un usuario normal', call('PATCH', "/api/tickets/$id", ['assignee_id' => $anaId], $tech)[0] === 422);
 $u = call('PATCH', "/api/tickets/$id", ['priority' => 'baja'], $tech);
 check('cambiar prioridad recalcula plazo', (strtotime($u[1]['due_at']) - strtotime($u[1]['created_at'])) === 72 * 3600);
-check('filtro por estado', count(call('GET', '/api/tickets?status=en_curso', [], $tech)[1]) === 1 && call('GET', '/api/tickets?status=cerrado', [], $tech)[1] === []);
-check('filtro no permite inyección', call('GET', "/api/tickets?status=' OR 1=1 --", [], $tech)[1] === []);
+check('filtro por estado', count(call('GET', '/api/tickets?status=en_curso', [], $tech)[1]['items']) === 1 && call('GET', '/api/tickets?status=cerrado', [], $tech)[1]['items'] === []);
+check('filtro no permite inyección', call('GET', "/api/tickets?status=' OR 1=1 --", [], $tech)[0] === 422);
 check('nota pública', call('POST', "/api/tickets/$id/comments", ['body' => 'Lo miro hoy'], $tech)[0] === 201);
 check('nota interna', call('POST', "/api/tickets/$id/comments", ['body' => 'Secreto', 'internal' => true], $tech)[0] === 201);
 check('usuario no crea notas internas', call('POST', "/api/tickets/$id/comments", ['body' => 'x', 'internal' => true], $ana)[0] === 403);
@@ -157,6 +158,53 @@ check('salud', call('GET', '/api/health')[1]['status'] === 'ok');
 check('ruta inexistente', call('GET', '/api/nada')[0] === 404);
 check('método incorrecto', call('DELETE', '/api/tickets', [], $admin)[0] === 405);
 check('id no numérico', call('GET', '/api/tickets/abc', [], $admin)[0] === 404);
+
+echo "Endurecimiento\n";
+check('filtro no UTF-8', call('GET', "/api/tickets?status=\xff", [], $tech)[0] === 422);
+check('búsqueda no UTF-8', call('GET', "/api/tickets?q=%FF", [], $tech)[0] === 422);
+check('rechaza caracteres de control', call('POST', '/api/tickets', ['title' => "ab\0c", 'description' => 'xxxx', 'priority' => 'baja'], $ana)[0] === 422);
+check('identificador fuera de rango', call('PATCH', "/api/tickets/$id", ['assignee_id' => 99999999999], $tech)[0] === 422);
+$bloqueos = 0;
+for ($i = 0; $i < 35; $i++) {
+    $bloqueos += call('POST', '/api/login', ['email' => "x$i@t.test", 'password' => 'mala'], null, [], '10.9.9.9')[0] === 429 ? 1 : 0;
+}
+check('limita una IP aunque rote correos', $bloqueos === 5);
+for ($i = 0; $i < 25; $i++) {
+    $estado = call('POST', '/api/login', ['email' => 'objetivo@t.test', 'password' => 'mala'], null, [], "10.8.0.$i")[0];
+}
+check('limita un correo aunque rote IP', $estado === 429);
+for ($i = 1; $i <= 45; $i++) {
+    call('POST', '/api/tickets', ['title' => "Carga 100% $i", 'description' => 'xxxx', 'priority' => 'baja'], $luis);
+}
+$p = call('GET', '/api/tickets?page=3', [], $luis)[1];
+check('paginación', $p['total'] === 45 && $p['pages'] === 3 && count($p['items']) === 5 && $p['page'] === 3);
+check('página fuera de rango', call('GET', '/api/tickets?page=999', [], $luis)[1]['page'] === 3);
+check('búsqueda', call('GET', '/api/tickets?q=' . urlencode('100% 45'), [], $luis)[1]['total'] === 1);
+check('búsqueda literal de comodines', call('GET', '/api/tickets?q=' . urlencode('100%'), [], $luis)[1]['total'] === 45 && call('GET', '/api/tickets?q=' . urlencode('%'), [], $luis)[1]['total'] === 45 && call('GET', '/api/tickets?q=' . urlencode('_'), [], $luis)[1]['total'] === 0);
+check('la búsqueda respeta permisos', call('GET', '/api/tickets?q=carga', [], $ana)[1]['total'] === 0);
+$s1 = call('POST', '/api/login', ['email' => 'tec@t.test', 'password' => 'clave-de-pruebas-1'], null, [], '10.7.0.1')[1]['token'];
+$s2 = call('POST', '/api/login', ['email' => 'tec@t.test', 'password' => 'clave-de-pruebas-1'], null, [], '10.7.0.2')[1]['token'];
+check('contraseña actual errónea', call('POST', '/api/me/password', ['current' => 'mal', 'new' => 'nueva-clave-segura-1'], $s1)[0] === 422);
+check('contraseña demasiado larga', call('POST', '/api/me/password', ['current' => 'clave-de-pruebas-1', 'new' => str_repeat('a', 73)], $s1)[0] === 422);
+check('cambia contraseña', call('POST', '/api/me/password', ['current' => 'clave-de-pruebas-1', 'new' => 'nueva-clave-segura-1'], $s1)[0] === 204);
+check('mantiene la sesión actual', call('GET', '/api/me', [], $s1)[0] === 200);
+check('cierra las demás sesiones', call('GET', '/api/me', [], $s2)[0] === 401);
+$anaT = call('POST', '/api/login', ['email' => 'ana@t.test', 'password' => 'clave-de-pruebas-1'], null, [], '10.7.0.3')[1]['token'];
+check('solo admin reinicia', call('POST', "/api/users/$anaId/password", ['password' => 'otra-clave-segura-22'], $anaT)[0] === 403);
+check('admin reinicia y revoca', call('POST', "/api/users/$anaId/password", ['password' => 'otra-clave-segura-22'], $admin)[0] === 204 && call('GET', '/api/me', [], $anaT)[0] === 401);
+$acciones = array_column(call('GET', '/api/audit', [], $admin)[1], 'action');
+check('registro de actividad', in_array('usuario.reinicio_contrasena', $acciones, true) && in_array('ticket.cambio', $acciones, true) && in_array('equipo.alta', $acciones, true));
+check('registro solo para admin', call('GET', '/api/audit', [], $s1)[0] === 403);
+check('el registro no guarda contraseñas', !str_contains(json_encode(call('GET', '/api/audit', [], $admin)[1]), 'otra-clave'));
+putenv('AGENT_MIN_INTERVAL=60');
+check('limita informes frecuentes', call('POST', '/api/agent/report', $report + ['disk_used_pct' => 40], null, ['X-Agent-Key' => $key])[0] === 429);
+putenv('AGENT_MIN_INTERVAL=0');
+$db->run("UPDATE device_reports SET reported_at = '2000-01-01T00:00:00Z'");
+call('POST', '/api/agent/report', $report + ['disk_used_pct' => 40], null, ['X-Agent-Key' => $key]);
+check('purga informes antiguos', (int) $db->value('SELECT COUNT(*) FROM device_reports') === 1);
+$activa = $alert;
+$dupe = call('PATCH', "/api/tickets/$activa", ['status' => 'abierto'], $s1);
+check('no reabre una alerta duplicada', $dupe[0] === 409);
 
 if ($file) {
     unlink($file);

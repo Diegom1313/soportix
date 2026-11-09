@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Soportix\Controllers;
 
+use Soportix\Audit;
 use Soportix\Clock;
 use Soportix\Database;
 use Soportix\HttpError;
@@ -12,9 +13,10 @@ use Soportix\Validator;
 final class DeviceController
 {
     private const DISK_ALERT_PCT = 90;
+    private const REPORT_RETENTION_DAYS = 90;
     private const COLUMNS = 'id, hostname, os, cpu, ram_mb, disk_total_gb, disk_used_pct, ip, last_seen, created_at';
 
-    public function __construct(private readonly Database $db)
+    public function __construct(private readonly Database $db, private readonly Audit $audit)
     {
     }
 
@@ -49,6 +51,7 @@ final class DeviceController
             'INSERT INTO devices (hostname, agent_key_hash, created_at) VALUES (?, ?, ?)',
             [$data['hostname'], hash('sha256', $key), Clock::now()]
         );
+        $this->audit->record($r, 'equipo.alta', $data['hostname']);
         return [201, ['id' => $id, 'hostname' => $data['hostname'], 'agent_key' => $key]];
     }
 
@@ -58,6 +61,11 @@ final class DeviceController
         $device = $key ? $this->db->one('SELECT * FROM devices WHERE agent_key_hash = ?', [hash('sha256', $key)]) : null;
         if (!$device) {
             throw new HttpError(401, 'Clave de agente no válida');
+        }
+        $interval = getenv('AGENT_MIN_INTERVAL');
+        $interval = $interval === false ? 30 : (int) $interval;
+        if ($interval > 0 && $device['last_seen'] !== null && $device['last_seen'] > Clock::now(-$interval)) {
+            throw new HttpError(429, 'Informe demasiado frecuente');
         }
         $data = (new Validator($r->body))->string('os', 1, 190, false)->string('cpu', 1, 190, false)->string('ip', 2, 45, false)->validated();
         $ram = self::range($r->body['ram_mb'] ?? null, 0, 100_000_000, 'ram_mb');
@@ -75,6 +83,7 @@ final class DeviceController
                 [$data['os'] ?? null, $data['cpu'] ?? null, $data['ip'] ?? null, $ram, $disk, $used, json_encode($software, JSON_UNESCAPED_UNICODE), $now, $device['id']]
             );
             $this->db->run('INSERT INTO device_reports (device_id, disk_used_pct, reported_at) VALUES (?, ?, ?)', [$device['id'], $used, $now]);
+            $this->db->run('DELETE FROM device_reports WHERE device_id = ? AND reported_at < ?', [$device['id'], Clock::now(-self::REPORT_RETENTION_DAYS * 86400)]);
             $ticketId = $used !== null && $used >= self::DISK_ALERT_PCT ? $this->diskAlert($device, $used, $now) : null;
             $this->db->pdo->commit();
         } catch (\Throwable $e) {
@@ -93,11 +102,12 @@ final class DeviceController
         if ($open) {
             return null;
         }
-        return $this->db->insert(
-            "INSERT INTO tickets (title, description, priority, source, alert_key, device_id, due_at, created_at, updated_at) VALUES (?, ?, 'alta', 'agente', 'disk', ?, ?, ?, ?)",
+        $inserted = $this->db->run(
+            "INSERT INTO tickets (title, description, priority, source, alert_key, device_id, due_at, created_at, updated_at) VALUES (?, ?, 'alta', 'agente', 'disk', ?, ?, ?, ?) ON CONFLICT DO NOTHING",
             ["Disco casi lleno en {$device['hostname']}", "El agente informa de un uso de disco del $used %.", $device['id'],
                 Clock::now(TicketController::SLA_HOURS['alta'] * 3600), $now, $now]
         );
+        return $inserted->rowCount() ? (int) $this->db->pdo->lastInsertId() : null;
     }
 
     private static function range(mixed $value, int $min, int $max, string $field): ?int

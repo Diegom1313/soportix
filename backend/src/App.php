@@ -19,10 +19,11 @@ final class App
         $this->auth = new Auth($db);
         $this->router = new Router();
         $r = $this->router;
-        $auth = new AuthController($this->auth);
-        $users = new UserController($db);
-        $tickets = new TicketController($db);
-        $devices = new DeviceController($db);
+        $audit = new Audit($db);
+        $auth = new AuthController($this->auth, $audit);
+        $users = new UserController($db, $this->auth, $audit);
+        $tickets = new TicketController($db, $audit);
+        $devices = new DeviceController($db, $audit);
         $stats = new StatsController($db);
         $staff = ['admin', 'tecnico'];
         $admin = ['admin'];
@@ -32,6 +33,9 @@ final class App
         $r->add('POST', '/api/login', [$auth, 'login']);
         $r->add('POST', '/api/logout', [$auth, 'logout'], []);
         $r->add('GET', '/api/me', [$auth, 'me'], []);
+        $r->add('POST', '/api/me/password', [$auth, 'changePassword'], []);
+        $r->add('POST', '/api/users/{id}/password', [$users, 'resetPassword'], $admin);
+        $r->add('GET', '/api/audit', [$stats, 'audit'], $admin);
         $r->add('GET', '/api/users', [$users, 'index'], $admin);
         $r->add('POST', '/api/users', [$users, 'store'], $admin);
         $r->add('PATCH', '/api/users/{id}', [$users, 'update'], $admin);

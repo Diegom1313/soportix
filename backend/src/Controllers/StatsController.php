@@ -40,6 +40,11 @@ final class StatsController
         return [200, $this->counts()];
     }
 
+    public function audit(Request $r): array
+    {
+        return [200, $this->db->all('SELECT id, user_name, action, detail, ip, created_at FROM audit_log ORDER BY id DESC LIMIT 200')];
+    }
+
     public function health(Request $r): array
     {
         $this->db->value('SELECT 1');

@@ -6,6 +6,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 if (-not $Url -or -not $Key) { throw 'Define SOPORTIX_URL y SOPORTIX_KEY' }
+if ($Url -notmatch '^https://' -and $env:SOPORTIX_ALLOW_HTTP -ne '1') { throw 'SOPORTIX_URL debe usar HTTPS' }
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 $os = Get-CimInstance Win32_OperatingSystem

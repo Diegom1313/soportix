@@ -25,10 +25,25 @@ final class Validator
             $this->errors[$field] = 'Debe ser texto';
             return $this;
         }
+        if (!mb_check_encoding($value, 'UTF-8') || preg_match('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', $value)) {
+            $this->errors[$field] = 'Contiene caracteres no permitidos';
+            return $this;
+        }
         $value = trim($value);
         $length = mb_strlen($value);
         if ($length < $min || $length > $max) {
             $this->errors[$field] = "Debe tener entre $min y $max caracteres";
+            return $this;
+        }
+        $this->clean[$field] = $value;
+        return $this;
+    }
+
+    public function password(string $field): self
+    {
+        $value = $this->data[$field] ?? null;
+        if (!is_string($value) || strlen($value) < 12 || strlen($value) > 72) {
+            $this->errors[$field] = 'Debe tener entre 12 y 72 caracteres';
             return $this;
         }
         $this->clean[$field] = $value;
@@ -72,7 +87,7 @@ final class Validator
             return $this;
         }
         $value = $this->data[$field];
-        if ($value !== null && (!is_int($value) || $value < 1)) {
+        if ($value !== null && (!is_int($value) || $value < 1 || $value > 2147483647)) {
             $this->errors[$field] = 'Identificador no válido';
             return $this;
         }

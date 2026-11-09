@@ -21,6 +21,13 @@
 
 ## Análisis dinámico
 
-El flujo `Análisis OWASP ZAP` analiza la aplicación desplegada en un entorno temporal. Se lanza a mano desde la pestaña Actions.
+El flujo `Análisis OWASP ZAP` analiza la aplicación en un entorno temporal y se lanza a mano desde la pestaña Actions. Es un análisis pasivo básico sin sesión iniciada.
 
-**Estado:** pendiente de la primera ejecución. Aquí se documentarán los hallazgos y sus correcciones.
+Primera ejecución: 64 comprobaciones superadas, 0 fallos y 4 avisos.
+
+| Aviso | Decisión |
+|---|---|
+| CSP con `style-src unsafe-inline` | Corregido: la política ya no lo permite |
+| Falta `Cross-Origin-Embedder-Policy` | Corregido: se envía `require-corp` |
+| Contenido almacenable en caché | Aceptado: afecta a archivos estáticos públicos; la API responde `no-store` |
+| Aplicación web moderna | Informativo: indica que conviene un análisis con navegador |

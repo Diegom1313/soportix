@@ -1,0 +1,24 @@
+name: Análisis OWASP ZAP
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  zap:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Levantar la aplicación
+        run: |
+          docker network create zap
+          docker run -d --name db --network zap -e POSTGRES_PASSWORD=zap -e POSTGRES_DB=soportix postgres:16-alpine
+          docker build -t soportix .
+          docker run -d --name app --network zap -p 8080:80 \
+            -e DB_DSN='pgsql:host=db;dbname=soportix' -e DB_USER=postgres -e DB_PASSWORD=zap \
+            -e ADMIN_EMAIL=admin@zap.test -e ADMIN_PASSWORD=clave-de-analisis-zap soportix
+          timeout 90 sh -c 'until curl -fs localhost:8080/api/health; do sleep 2; done'
+      - uses: zaproxy/action-baseline@v0.14.0
+        with:
+          target: http://localhost:8080
+          allow_issue_writing: false
+          fail_action: false

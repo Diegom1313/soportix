@@ -1,0 +1,60 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  backend:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: pruebas
+          POSTGRES_DB: soportix_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          extensions: pdo_sqlite, pdo_pgsql, mbstring
+      - run: find backend -name '*.php' -print0 | xargs -0 -n1 php -l
+      - name: Tests con SQLite
+        run: php backend/tests/run.php
+      - name: Tests con PostgreSQL
+        run: php backend/tests/run.php
+        env:
+          TEST_DB_DSN: pgsql:host=127.0.0.1;dbname=soportix_test
+          TEST_DB_USER: postgres
+          TEST_DB_PASSWORD: pruebas
+  frontend:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --no-audit --no-fund
+        working-directory: frontend
+      - run: npm run build
+        working-directory: frontend
+  sistemas:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: shellcheck -S warning agent/soportix-agent.sh ops/*.sh infra/terraform/cloud-init.sh
+      - name: Validar PowerShell
+        shell: pwsh
+        run: |
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile("$PWD/agent/soportix-agent.ps1", [ref]$null, [ref]$errors)
+          if ($errors) { $errors; exit 1 }
+      - uses: hashicorp/setup-terraform@v3
+      - run: terraform init -backend=false && terraform validate
+        working-directory: infra/terraform
+      - run: docker build -t soportix .

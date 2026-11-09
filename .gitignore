@@ -1,0 +1,9 @@
+node_modules/
+backend/public/assets/
+backend/public/index.html
+.env
+backups/
+*.db
+.terraform/
+*.tfstate*
+*.tfvars

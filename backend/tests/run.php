@@ -80,6 +80,8 @@ check('correo duplicado', call('POST', '/api/users', ['name' => 'Otra', 'email' 
 check('contraseña corta', call('POST', '/api/users', ['name' => 'Otra', 'email' => 'o@t.test', 'password' => 'corta', 'role' => 'usuario'], $admin)[0] === 422);
 $adminId = call('GET', '/api/me', [], $admin)[1]['id'];
 check('no se puede quitar el último admin', call('PATCH', "/api/users/$adminId", ['active' => false], $admin)[0] === 409);
+$otroAdmin = call('POST', '/api/users', ['name' => 'Segundo', 'email' => 'segundo@t.test', 'password' => 'clave-suficientemente-larga', 'role' => 'admin'], $admin);
+check('no puedes desactivarte a ti', call('PATCH', "/api/users/$adminId", ['active' => false], $admin)[0] === 409);
 $nt = call('POST', '/api/login', ['email' => 'nueva@t.test', 'password' => 'clave-suficientemente-larga'], null, [], '10.4.0.3')[1]['token'];
 call('PATCH', '/api/users/' . $new[1]['id'], ['active' => false], $admin);
 check('desactivar revoca sesiones', call('GET', '/api/me', [], $nt)[0] === 401);

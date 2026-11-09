@@ -72,6 +72,9 @@ final class UserController
             && (int) $this->db->value("SELECT COUNT(*) FROM users WHERE role = 'admin' AND active = 1") <= 1) {
             throw new HttpError(409, 'Debe quedar al menos un administrador activo');
         }
+        if ($id === (int) $r->user['id'] && $active === 0) {
+            throw new HttpError(409, 'No puedes desactivar tu propia cuenta');
+        }
         $this->db->run('UPDATE users SET role = ?, active = ? WHERE id = ?', [$role, $active, $id]);
         if ($active === 0) {
             $this->auth->revokeAll($id);
